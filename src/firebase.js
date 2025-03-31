@@ -1,8 +1,12 @@
+// src/firebase.js
+// Update this file to properly export the auth object
+
 import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getAnalytics } from 'firebase/analytics';
-import { getDatabase } from 'firebase/database'; // Add this import
+import { getDatabase } from 'firebase/database';
+import { getAuth } from 'firebase/auth'; // Add this import
 
 // Your Firebase configuration
 const firebaseConfig = {
@@ -13,7 +17,7 @@ const firebaseConfig = {
   messagingSenderId: '101459255521',
   appId: '1:101459255521:web:ca315844a13e2bdaa757a0',
   measurementId: 'G-WR1NHCM2JF',
-  databaseURL: 'https://jr-mustangs-default-rtdb.firebaseio.com', // Add this line
+  databaseURL: 'https://jr-mustangs-default-rtdb.firebaseio.com',
 };
 
 // Initialize Firebase
@@ -23,6 +27,7 @@ const app = initializeApp(firebaseConfig);
 const analytics = getAnalytics(app);
 const db = getFirestore(app);
 const storage = getStorage(app);
-const rtdb = getDatabase(app); // Add this line
+const rtdb = getDatabase(app);
+const auth = getAuth(app); // Initialize auth
 
-export { db, storage, rtdb }; // Add rtdb to exports
+export { db, storage, rtdb, auth }; // Add auth to exports
