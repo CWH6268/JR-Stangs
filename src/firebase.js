@@ -21,22 +21,34 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// Initialize services
-const analytics = getAnalytics(app);
+// Initialize core services
 const db = getFirestore(app);
 const storage = getStorage(app);
 const rtdb = getDatabase(app);
 const auth = getAuth(app);
 
-// Enable offline persistence for Firestore
-enableIndexedDbPersistence(db).catch((err) => {
-  if (err.code === 'failed-precondition') {
-    // Multiple tabs open, persistence can only be enabled in one tab at a time
-    console.warn('Persistence failed: Multiple tabs open');
-  } else if (err.code === 'unimplemented') {
-    // The current browser does not support all of the features required to enable persistence
-    console.warn('Persistence is not available in this browser');
-  }
-});
+// Initialize analytics only if not in a test environment
+let analytics = null;
+try {
+  analytics = getAnalytics(app);
+} catch (e) {
+  console.warn('Analytics initialization failed:', e);
+}
+
+// Try to enable persistence, but don't crash the app if it fails
+try {
+  // Enable offline persistence for Firestore with better error handling
+  enableIndexedDbPersistence(db).catch((err) => {
+    if (err.code === 'failed-precondition') {
+      console.warn('Persistence failed: Multiple tabs open');
+    } else if (err.code === 'unimplemented') {
+      console.warn('Persistence is not available in this browser');
+    } else {
+      console.warn('Persistence error:', err);
+    }
+  });
+} catch (error) {
+  console.warn('Error setting up persistence:', error);
+}
 
 export { db, storage, rtdb, auth };
