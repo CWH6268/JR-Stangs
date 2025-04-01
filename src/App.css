@@ -201,3 +201,71 @@ body {
     grid-template-columns: 1fr;
   }
 }
+/* Add these styles to your src/styles.css file */
+
+/* Coach notes formatting */
+.other-coaches-notes {
+  background-color: #f8f9fa;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 20px;
+  border-left: 3px solid #4f2683;
+}
+
+.other-coaches-notes h6 {
+  margin-bottom: 10px;
+  color: #4f2683;
+  font-weight: 600;
+}
+
+.coach-note-entry {
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.coach-note-entry:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.coach-note-entry strong {
+  color: #495057;
+}
+
+/* Notes preview with coach attribution */
+.notes-preview-with-coaches {
+  position: relative;
+}
+
+.notes-preview-with-coaches .coach-name {
+  font-weight: 600;
+  color: #4f2683;
+}
+
+/* Player table notes display */
+.player-notes-table-display {
+  max-height: 80px;
+  overflow-y: auto;
+}
+
+/* Notes-structured table view */
+.structured-notes-table {
+  font-size: 0.9rem;
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.structured-notes-table td {
+  padding: 3px;
+  vertical-align: top;
+}
+
+.structured-notes-table .coach-name-cell {
+  font-weight: 600;
+  color: #4f2683;
+  white-space: nowrap;
+  width: 1%;
+  padding-right: 8px;
+}

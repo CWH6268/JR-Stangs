@@ -1,7 +1,7 @@
 // src/useEditLock.js
 import { useEffect, useState } from 'react';
 import { ref, onValue, set, remove, onDisconnect } from 'firebase/database';
-import { rtdb } from './firebase'; // Adjust path if needed
+import { rtdb } from '../firebase'; // Adjust path if needed
 
 export function useEditLock(playerId, coachName) {
   const [isLocked, setIsLocked] = useState(false);

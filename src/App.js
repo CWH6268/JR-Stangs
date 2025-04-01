@@ -4,6 +4,7 @@ import Header from './components/Header';
 import PlayerTable from './components/PlayerTable';
 import FilterControls from './components/FilterControls';
 import ExportTools from './components/ExportTools';
+import CoachNamePrompt from './components/CoachNamePrompt';
 import { loadRosterData } from './utils/dataParser';
 import { db } from './firebase';
 import { collection, doc, setDoc, getDocs, query } from 'firebase/firestore';
@@ -11,6 +12,9 @@ import 'bootstrap/dist/css/bootstrap.min.css';
 import './styles.css';
 
 function App() {
+  // Ensure coach name is initialized before the app loads
+  const [coachName, setCoachName] = useState(localStorage.getItem('coachName') || '');
+
   const [players, setPlayers] = useState([]);
   const [filteredPlayers, setFilteredPlayers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -20,6 +24,12 @@ function App() {
     school: '',
     searchTerm: '',
   });
+
+  // Add a function to update coach name
+  const updateCoachName = (name) => {
+    localStorage.setItem('coachName', name);
+    setCoachName(name);
+  };
 
   // Load roster data on component mount
   useEffect(() => {
@@ -141,7 +151,7 @@ function App() {
   }, [filters, players]);
 
   // Update player data (notes only) and save to Firebase
-  const updatePlayerData = async (playerId, field, value) => {
+  const updatePlayerData = async (playerId, field, value, notesByCoach = null) => {
     // Only allow updating Notes field
     if (field !== 'Notes') return;
 
@@ -166,14 +176,17 @@ function App() {
     try {
       // Find the player to get their info
       const playerName = `${playerToUpdate.FirstName || ''} ${playerToUpdate.LastName || ''}`.trim();
+      const currentCoachName = localStorage.getItem('coachName') || 'Coach';
 
       const playerRef = doc(db, 'playerNotes', playerId);
       await setDoc(playerRef, {
-        notes: value,
+        notes: value, // Keep the old field for backward compatibility
+        notesByCoach: notesByCoach, // Add the new structured data
         timestamp: new Date().toISOString(),
         playerId: playerId,
         legacyId: playerToUpdate.legacyId,
         playerName: playerName,
+        lastUpdatedBy: currentCoachName,
       });
 
       console.log('Notes saved to Firebase for player:', playerName, 'with ID:', playerId);
@@ -185,6 +198,7 @@ function App() {
   return (
     <Container fluid className="app-container p-0">
       <Header />
+      <CoachNamePrompt onSave={updateCoachName} />
 
       <Container className="mt-4 mb-5">
         {error && (

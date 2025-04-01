@@ -1,128 +1,192 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Modal, Button, Form, Alert, Row, Col } from 'react-bootstrap';
 import PlayerImage from './PlayerImage';
-import { ref, onValue, set, remove, onDisconnect } from 'firebase/database';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../firebase';
+import { ref, remove } from 'firebase/database';
 import { rtdb } from '../firebase';
 
 const NotesEditor = ({ player, show, handleClose, handleSave }) => {
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
-  const [lockStatus, setLockStatus] = useState(null);
-  const [lockError, setLockError] = useState(null);
+  const [lastUpdateInfo, setLastUpdateInfo] = useState(null);
+  const [originalNotesData, setOriginalNotesData] = useState({});
+  const [allCoachNotes, setAllCoachNotes] = useState({});
 
-  // Use a ref to track if we own the lock
-  const hasActiveLock = useRef(false);
+  // Get the coach name
+  const coachName = localStorage.getItem('coachName');
 
-  // Generate a unique coach name if not already set
-  const coachName = localStorage.getItem('coachName') || `Coach`;
-
-  // Store coach name for future use
+  // If there's no coach name, force a page reload to trigger the prompt
   useEffect(() => {
-    if (!localStorage.getItem('coachName')) {
-      localStorage.setItem('coachName', coachName);
+    if (!coachName && show) {
+      console.log('No coach name found, reloading page to trigger prompt');
+      localStorage.removeItem('coachName'); // Clear it just to be safe
+      window.location.reload();
     }
-  }, [coachName]);
+  }, [coachName, show]);
 
-  // Initialize notes when player changes
+  // Clean up any localStorage locks when component mounts
   useEffect(() => {
-    if (player) {
-      setNotes(player.Notes || '');
-    }
-  }, [player]);
+    // Remove any stale lock indicators from localStorage
+    Object.keys(localStorage).forEach((key) => {
+      if (key.startsWith('lock_')) {
+        localStorage.removeItem(key);
+      }
+    });
+  }, []);
 
-  // Set up lock for this player when modal is shown
+  // Clean up locks when component unmounts or modal closes
   useEffect(() => {
-    if (!show || !player) {
-      hasActiveLock.current = false;
-      return;
-    }
-
-    console.log('Attempting to lock player:', player.id, 'as coach:', coachName);
-
-    // Reference to this player's lock in Realtime Database
-    const lockRef = ref(rtdb, `playerLocks/${player.id}`);
-
-    // Create a lock when the modal opens
-    const createLock = async () => {
-      try {
-        // Check if someone else has a lock
-        const snapshot = await new Promise((resolve) => {
-          onValue(lockRef, resolve, { onlyOnce: true });
+    return () => {
+      if (player) {
+        // Try to clean up any locks in Firebase
+        const lockRef = ref(rtdb, `playerLocks/${player.id}`);
+        remove(lockRef).catch((err) => {
+          console.error('Error removing lock on unmount:', err);
         });
 
-        const existingLock = snapshot.val();
-
-        if (existingLock && existingLock.coachName !== coachName) {
-          // Someone else has a lock - set error and close the modal
-          console.log('Player already locked by another coach');
-          setLockError(`This player is currently being edited`);
-          hasActiveLock.current = false;
-
-          // Close modal after showing error briefly
-          setTimeout(() => handleClose(), 2000);
-          return;
-        }
-
-        // Create our lock
-        console.log('Creating lock as:', coachName);
-        await set(lockRef, {
-          coachName,
-          timestamp: Date.now(),
+        // Clear any localStorage indicators
+        Object.keys(localStorage).forEach((key) => {
+          if (key.startsWith('lock_')) {
+            localStorage.removeItem(key);
+          }
         });
-
-        // Set up automatic cleanup if coach disconnects
-        onDisconnect(lockRef).remove();
-
-        setLockStatus({ coachName, timestamp: Date.now() });
-        hasActiveLock.current = true;
-        setLockError(null);
-      } catch (error) {
-        console.error('Error creating lock:', error);
-        setLockError('Failed to lock player for editing');
-        hasActiveLock.current = false;
-        setTimeout(() => handleClose(), 2000);
       }
     };
+  }, [player]);
 
-    createLock();
+  // Helper to parse existing notes by coach
+  const parseNotesByCoach = (notesString) => {
+    // Default empty structure
+    const coachNotes = {};
 
-    // Listen for lock changes
-    const unsubscribe = onValue(lockRef, (snapshot) => {
-      const data = snapshot.val();
+    if (!notesString) return coachNotes;
 
-      // Important: Only react to lock changes if we don't own the lock
-      // or if the lock is gone when we previously had it
-      if (hasActiveLock.current) {
-        // We had a lock - check if it's been removed by someone else
-        if (!data) {
-          console.log('Our lock was removed by someone else');
-          hasActiveLock.current = false;
-          setLockError('Your editing session was interrupted');
-          setTimeout(() => handleClose(), 2000);
-        } else if (data.coachName !== coachName) {
-          // Someone else took our lock (very rare case)
-          console.log('Our lock was taken by someone else');
-          hasActiveLock.current = false;
-          setLockError(`This player is now being edited by another coach`);
-          setTimeout(() => handleClose(), 2000);
+    try {
+      // Try to parse as JSON first in case it's already in our format
+      const notesObj = JSON.parse(notesString);
+      if (typeof notesObj === 'object' && notesObj !== null) {
+        return notesObj;
+      }
+    } catch (e) {
+      // Not JSON, continue with parsing old text format
+    }
+
+    // Old format - try to parse it
+    // This is a simple heuristic, might need adjustment based on actual data
+    const lines = notesString.split('\n');
+    let currentCoach = 'Unknown Coach';
+    let currentNotes = [];
+
+    lines.forEach((line) => {
+      const trimmedLine = line.trim();
+
+      // Check if this line has a coach name (e.g., "Coach A:")
+      const coachMatch = trimmedLine.match(/^([^:]+):/);
+
+      if (coachMatch) {
+        // New coach section - save previous coach's notes if any
+        if (currentNotes.length > 0) {
+          coachNotes[currentCoach] = (coachNotes[currentCoach] || '') + currentNotes.join(' ').trim();
         }
+
+        // Start new coach section
+        currentCoach = coachMatch[1].trim();
+        currentNotes = [trimmedLine.replace(coachMatch[0], '').trim()];
+      } else if (trimmedLine !== '') {
+        // Continue with current coach's notes
+        currentNotes.push(trimmedLine);
       }
     });
 
-    // Clear lock when component unmounts or modal closes
-    return () => {
-      unsubscribe();
-      console.log('Cleaning up lock on unmount/close');
+    // Add the last coach's notes
+    if (currentNotes.length > 0) {
+      coachNotes[currentCoach] = (coachNotes[currentCoach] || '') + currentNotes.join(' ').trim();
+    }
 
-      // Only remove the lock if we own it
-      if (player && hasActiveLock.current) {
-        console.log('Removing our lock during cleanup');
-        remove(lockRef).catch((err) => console.error('Error releasing lock:', err));
-        hasActiveLock.current = false;
+    return coachNotes;
+  };
+
+  // Helper to convert notes by coach to string format
+  const formatNotesForDisplay = (notesByCoach) => {
+    let formattedNotes = '';
+
+    Object.entries(notesByCoach).forEach(([coach, notes]) => {
+      if (notes.trim()) {
+        formattedNotes += `${coach}: ${notes.trim()}\n\n`;
       }
-    };
-  }, [show, player, coachName, handleClose]);
+    });
+
+    return formattedNotes.trim();
+  };
+
+  // Fetch the latest notes when the modal opens
+  useEffect(() => {
+    if (show && player && coachName) {
+      // Fetch the latest notes directly from Firebase to ensure we have current data
+      const fetchLatestNotes = async () => {
+        try {
+          // Get the latest notes
+          const notesRef = doc(db, 'playerNotes', player.id);
+          const notesSnapshot = await getDoc(notesRef);
+
+          let notesByCoach = {};
+
+          if (notesSnapshot.exists()) {
+            const data = notesSnapshot.data();
+
+            // Try to parse notes into coach structure
+            if (data.notesByCoach) {
+              // Already in our new format
+              notesByCoach = data.notesByCoach;
+            } else if (data.notes) {
+              // Old format - parse it
+              notesByCoach = parseNotesByCoach(data.notes);
+            }
+
+            // Get this coach's notes
+            setNotes(notesByCoach[coachName] || '');
+
+            // Save all coach notes
+            setAllCoachNotes(notesByCoach);
+
+            // Save original data for conflict detection
+            setOriginalNotesData({
+              notesByCoach,
+              lastUpdated: data.timestamp || new Date().toISOString(),
+            });
+
+            if (data.timestamp && data.lastUpdatedBy) {
+              setLastUpdateInfo({
+                coach: data.lastUpdatedBy,
+                time: new Date(data.timestamp).toLocaleString(),
+              });
+            }
+          } else {
+            // No notes yet
+            setNotes('');
+            setAllCoachNotes({});
+            setOriginalNotesData({
+              notesByCoach: {},
+              lastUpdated: new Date().toISOString(),
+            });
+          }
+        } catch (error) {
+          console.error('Error fetching latest notes:', error);
+          // Fallback
+          setNotes('');
+          setAllCoachNotes({});
+          setOriginalNotesData({
+            notesByCoach: {},
+            lastUpdated: new Date().toISOString(),
+          });
+        }
+      };
+
+      fetchLatestNotes();
+    }
+  }, [show, player, coachName]);
 
   // Handle notes change
   const handleNotesChange = (e) => {
@@ -131,45 +195,128 @@ const NotesEditor = ({ player, show, handleClose, handleSave }) => {
     setSaveSuccess(false);
   };
 
-  // Save notes and close modal
+  // Save notes
   const saveNotes = async () => {
-    if (!hasActiveLock.current) {
-      setLockError('You no longer have edit permissions for this player');
-      setTimeout(() => handleClose(), 2000);
+    if (!coachName) {
+      alert('Please reload the page and enter your name before saving notes.');
       return;
     }
 
     setSaving(true);
+
     try {
-      await handleSave(notes);
+      // Check if someone else modified the notes while we were editing
+      const notesRef = doc(db, 'playerNotes', player.id);
+      const latestSnapshot = await getDoc(notesRef);
+
+      let updatedCoachNotes = { ...allCoachNotes };
+
+      // If this coach's notes have content, add them
+      if (notes.trim()) {
+        updatedCoachNotes[coachName] = notes.trim();
+      } else {
+        // Remove this coach's entry if empty
+        delete updatedCoachNotes[coachName];
+      }
+
+      // Check for conflicts
+      if (latestSnapshot.exists()) {
+        const latestData = latestSnapshot.data();
+
+        // Check if someone else updated the notes
+        if (latestData.timestamp && latestData.timestamp !== originalNotesData.lastUpdated) {
+          // Get the latest notes by coach
+          let latestNotesByCoach = {};
+
+          if (latestData.notesByCoach) {
+            latestNotesByCoach = latestData.notesByCoach;
+          } else if (latestData.notes) {
+            latestNotesByCoach = parseNotesByCoach(latestData.notes);
+          }
+
+          // Merge the updates from other coaches
+          Object.entries(latestNotesByCoach).forEach(([coach, coachNotes]) => {
+            // Don't overwrite this coach's notes
+            if (coach !== coachName) {
+              updatedCoachNotes[coach] = coachNotes;
+            }
+          });
+
+          // Alert that we're merging notes
+          alert(
+            'Another coach updated these notes while you were editing. Your changes will be saved along with theirs.'
+          );
+        }
+      }
+
+      // Generate a formatted version for old clients
+      const formattedNotes = formatNotesForDisplay(updatedCoachNotes);
+
+      // Save the structured notes AND a formatted version for backward compatibility
+      await handleSave(formattedNotes, updatedCoachNotes);
+
       setSaveSuccess(true);
 
-      // Don't close the modal yet, show success message
-      setTimeout(() => {
-        // Release the lock
-        if (player && hasActiveLock.current) {
-          const lockRef = ref(rtdb, `playerLocks/${player.id}`);
-          remove(lockRef).catch((err) => console.error('Error releasing lock after save:', err));
-          hasActiveLock.current = false;
-        }
+      // Ensure any locks are cleared from Firebase
+      if (player) {
+        const lockRef = ref(rtdb, `playerLocks/${player.id}`);
+        remove(lockRef).catch((err) => {
+          console.error('Error removing lock after save:', err);
+        });
+      }
 
+      // Clear any localStorage locks
+      Object.keys(localStorage).forEach((key) => {
+        if (key.startsWith('lock_')) {
+          localStorage.removeItem(key);
+        }
+      });
+
+      // Show success message briefly before closing
+      setTimeout(() => {
         handleClose();
         setSaving(false);
-        setSaveSuccess(false);
-      }, 1500);
+      }, 1000);
     } catch (error) {
       console.error('Error saving notes:', error);
       setSaving(false);
+      alert('Failed to save notes. Please try again.');
+
+      // Still try to clean up locks even if save fails
+      if (player) {
+        const lockRef = ref(rtdb, `playerLocks/${player.id}`);
+        remove(lockRef).catch((err) => {
+          console.error('Error removing lock after failed save:', err);
+        });
+      }
+
+      // Clear any localStorage locks
+      Object.keys(localStorage).forEach((key) => {
+        if (key.startsWith('lock_')) {
+          localStorage.removeItem(key);
+        }
+      });
     }
   };
 
-  // Handle cancel - release lock and close
-  const handleCancelWithUnlock = () => {
-    if (player && hasActiveLock.current) {
+  // Handle modal close with explicit lock cleanup
+  const handleCancelWithCleanup = () => {
+    // Clean up any locks in Firebase
+    if (player) {
       const lockRef = ref(rtdb, `playerLocks/${player.id}`);
-      remove(lockRef).catch((err) => console.error('Error releasing lock on cancel:', err));
-      hasActiveLock.current = false;
+      remove(lockRef).catch((err) => {
+        console.error('Error removing lock on cancel:', err);
+      });
     }
+
+    // Clear any localStorage locks
+    Object.keys(localStorage).forEach((key) => {
+      if (key.startsWith('lock_')) {
+        localStorage.removeItem(key);
+      }
+    });
+
+    // Close the modal
     handleClose();
   };
 
@@ -194,23 +341,41 @@ const NotesEditor = ({ player, show, handleClose, handleSave }) => {
     setSaveSuccess(false);
   };
 
+  // Format all coaches' notes for preview
+  const getAllCoachesNotesPreview = () => {
+    const otherCoaches = Object.entries(allCoachNotes).filter(([coach]) => coach !== coachName);
+
+    if (otherCoaches.length === 0) return null;
+
+    return (
+      <div className="other-coaches-notes mb-3">
+        <h6>Notes from other coaches:</h6>
+        {otherCoaches.map(([coach, coachNotes]) => (
+          <div key={coach} className="coach-note-entry">
+            <strong>{coach}:</strong> {coachNotes}
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   return (
-    <Modal show={show} onHide={handleCancelWithUnlock} size="lg">
+    <Modal show={show} onHide={handleCancelWithCleanup} size="lg">
       <Modal.Header closeButton>
         <Modal.Title>
           Notes for {player?.FirstName} {player?.LastName}
         </Modal.Title>
       </Modal.Header>
       <Modal.Body>
-        {lockError && (
-          <Alert variant="danger" className="mb-3">
-            {lockError}
-          </Alert>
-        )}
-
         {saveSuccess && (
           <Alert variant="success" className="mb-3">
             Notes saved successfully!
+          </Alert>
+        )}
+
+        {lastUpdateInfo && (
+          <Alert variant="info" className="mb-3">
+            Last updated by {lastUpdateInfo.coach} at {lastUpdateInfo.time}
           </Alert>
         )}
 
@@ -220,17 +385,19 @@ const NotesEditor = ({ player, show, handleClose, handleSave }) => {
             <PlayerImage playerId={player?.id} playerName={`${player?.FirstName} ${player?.LastName}`} />
           </Col>
           <Col md={8}>
+            {getAllCoachesNotesPreview()}
+
             <Form>
               <Form.Group>
-                <Form.Label>Player Notes</Form.Label>
+                <Form.Label>Your Notes {coachName ? `(${coachName})` : ''}:</Form.Label>
                 <Form.Control
                   as="textarea"
                   rows={8}
                   value={notes}
                   onChange={handleNotesChange}
-                  placeholder="Enter detailed notes about the player's performance, skills, attitude, etc."
+                  placeholder="Enter your notes about the player's performance, skills, attitude, etc."
                   className="mb-3"
-                  disabled={!!lockError}
+                  disabled={saving || !coachName}
                 />
               </Form.Group>
               {/* Quick note templates */}
@@ -243,7 +410,7 @@ const NotesEditor = ({ player, show, handleClose, handleSave }) => {
                       className="filter-btn"
                       size="sm"
                       onClick={() => addQuickNote(note)}
-                      disabled={!!lockError}
+                      disabled={saving || !coachName}
                     >
                       {note}
                     </Button>
@@ -255,10 +422,10 @@ const NotesEditor = ({ player, show, handleClose, handleSave }) => {
         </Row>
       </Modal.Body>
       <Modal.Footer>
-        <Button variant="secondary" onClick={handleCancelWithUnlock} disabled={saving}>
+        <Button variant="secondary" onClick={handleCancelWithCleanup} disabled={saving}>
           Cancel
         </Button>
-        <Button variant="primary" onClick={saveNotes} disabled={saving || !!lockError}>
+        <Button variant="primary" onClick={saveNotes} disabled={saving || !coachName}>
           {saving ? 'Saving...' : 'Save Notes'}
         </Button>
       </Modal.Footer>
