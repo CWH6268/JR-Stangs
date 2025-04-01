@@ -69,11 +69,31 @@ const parseDate = (dateStr) => {
 
 /**
  * Load roster data from the paste.txt file in the public folder
+ * with support for offline caching
  * @returns {Promise<Array>} - Array of player objects
  */
 export const loadRosterData = async () => {
   try {
-    // Fetch the paste.txt file
+    // Check if we're offline first
+    const isOffline = !navigator.onLine;
+
+    // Try to load from cache first if offline or for faster loading
+    const cachedData = localStorage.getItem('rosterDataCache');
+    const cacheTimestamp = localStorage.getItem('rosterDataTimestamp');
+    const now = new Date().getTime();
+
+    // Use cache if offline or if the cache is less than 24 hours old
+    const shouldUseCache =
+      (isOffline && cachedData) ||
+      (cachedData && cacheTimestamp && now - parseInt(cacheTimestamp) < 24 * 60 * 60 * 1000);
+
+    if (shouldUseCache) {
+      console.log('Using cached roster data');
+      return JSON.parse(cachedData);
+    }
+
+    // If online and cache is stale or doesn't exist, fetch from file
+    console.log('Fetching fresh roster data');
     const response = await fetch('/paste.txt');
 
     if (!response.ok) {
@@ -96,7 +116,7 @@ export const loadRosterData = async () => {
     }
 
     // Process the data to add stable IDs, format dates
-    return data.map((player, index) => {
+    const processedData = data.map((player, index) => {
       // Format date fields
       const formattedPlayer = { ...player };
 
@@ -140,8 +160,24 @@ export const loadRosterData = async () => {
         Notes: '',
       };
     });
+
+    // Save to cache
+    localStorage.setItem('rosterDataCache', JSON.stringify(processedData));
+    localStorage.setItem('rosterDataTimestamp', now.toString());
+
+    return processedData;
   } catch (error) {
     console.error('Error loading roster data:', error);
+
+    // If we're offline and have any cached data, use it as a fallback
+    if (!navigator.onLine) {
+      const cachedData = localStorage.getItem('rosterDataCache');
+      if (cachedData) {
+        console.log('Offline - using cached data as fallback');
+        return JSON.parse(cachedData);
+      }
+    }
+
     throw error;
   }
 };

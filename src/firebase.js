@@ -1,12 +1,10 @@
 // src/firebase.js
-// Update this file to properly export the auth object
-
 import { initializeApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
+import { getFirestore, enableIndexedDbPersistence } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getAnalytics } from 'firebase/analytics';
 import { getDatabase } from 'firebase/database';
-import { getAuth } from 'firebase/auth'; // Add this import
+import { getAuth } from 'firebase/auth';
 
 // Your Firebase configuration
 const firebaseConfig = {
@@ -28,6 +26,17 @@ const analytics = getAnalytics(app);
 const db = getFirestore(app);
 const storage = getStorage(app);
 const rtdb = getDatabase(app);
-const auth = getAuth(app); // Initialize auth
+const auth = getAuth(app);
 
-export { db, storage, rtdb, auth }; // Add auth to exports
+// Enable offline persistence for Firestore
+enableIndexedDbPersistence(db).catch((err) => {
+  if (err.code === 'failed-precondition') {
+    // Multiple tabs open, persistence can only be enabled in one tab at a time
+    console.warn('Persistence failed: Multiple tabs open');
+  } else if (err.code === 'unimplemented') {
+    // The current browser does not support all of the features required to enable persistence
+    console.warn('Persistence is not available in this browser');
+  }
+});
+
+export { db, storage, rtdb, auth };

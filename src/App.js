@@ -5,6 +5,7 @@ import PlayerTable from './components/PlayerTable';
 import FilterControls from './components/FilterControls';
 import ExportTools from './components/ExportTools';
 import CoachNamePrompt from './components/CoachNamePrompt';
+import OfflineIndicator from './components/OfflineIndicator';
 import { loadRosterData } from './utils/dataParser';
 import { db } from './firebase';
 import { collection, doc, setDoc, getDocs, query } from 'firebase/firestore';
@@ -94,6 +95,20 @@ function App() {
       } catch (err) {
         console.error('Error loading roster data:', err);
         setError('Failed to load roster data. Please check that paste.txt is correctly formatted.');
+
+        // Try to load from cache in case of error
+        const cachedData = localStorage.getItem('rosterDataCache');
+        if (cachedData) {
+          try {
+            const parsedData = JSON.parse(cachedData);
+            setPlayers(parsedData);
+            setFilteredPlayers(parsedData);
+            setError('Using cached roster data. Some information may be outdated.');
+          } catch (cacheError) {
+            console.error('Error parsing cached data:', cacheError);
+          }
+        }
+
         setLoading(false);
       }
     };
@@ -192,12 +207,83 @@ function App() {
       console.log('Notes saved to Firebase for player:', playerName, 'with ID:', playerId);
     } catch (error) {
       console.error('Error saving notes to Firebase:', error);
+
+      // Store in local storage if Firebase save fails (offline)
+      try {
+        const pendingUpdates = JSON.parse(localStorage.getItem('pendingNoteUpdates') || '{}');
+        pendingUpdates[playerId] = {
+          field,
+          value,
+          notesByCoach,
+          timestamp: new Date().toISOString(),
+          playerName: `${playerToUpdate.FirstName || ''} ${playerToUpdate.LastName || ''}`.trim(),
+          coachName: localStorage.getItem('coachName') || 'Coach',
+        };
+        localStorage.setItem('pendingNoteUpdates', JSON.stringify(pendingUpdates));
+        console.log('Notes saved to local storage for offline sync');
+      } catch (localError) {
+        console.error('Error saving notes to local storage:', localError);
+      }
     }
   };
+
+  // Add a function to sync pending updates when back online
+  useEffect(() => {
+    const syncPendingUpdates = async () => {
+      // Only run if we're online
+      if (!navigator.onLine) return;
+
+      const pendingUpdates = JSON.parse(localStorage.getItem('pendingNoteUpdates') || '{}');
+      if (Object.keys(pendingUpdates).length === 0) return;
+
+      console.log('Syncing pending updates:', Object.keys(pendingUpdates).length);
+
+      // Process each pending update
+      for (const [playerId, update] of Object.entries(pendingUpdates)) {
+        try {
+          const playerRef = doc(db, 'playerNotes', playerId);
+          await setDoc(playerRef, {
+            notes: update.value,
+            notesByCoach: update.notesByCoach,
+            timestamp: update.timestamp,
+            playerId: playerId,
+            playerName: update.playerName,
+            lastUpdatedBy: update.coachName,
+          });
+
+          // Remove this update from pending list
+          delete pendingUpdates[playerId];
+          localStorage.setItem('pendingNoteUpdates', JSON.stringify(pendingUpdates));
+
+          console.log('Synced offline update for player ID:', playerId);
+        } catch (error) {
+          console.error('Failed to sync offline update for player ID:', playerId, error);
+        }
+      }
+    };
+
+    // Set up listener for online status
+    const handleOnline = () => {
+      console.log('Back online, attempting to sync pending updates');
+      syncPendingUpdates();
+    };
+
+    window.addEventListener('online', handleOnline);
+
+    // Try to sync on mount as well
+    if (navigator.onLine) {
+      syncPendingUpdates();
+    }
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+    };
+  }, []);
 
   return (
     <Container fluid className="app-container p-0">
       <Header />
+      <OfflineIndicator />
       <CoachNamePrompt onSave={updateCoachName} />
 
       <Container className="mt-4 mb-5">
